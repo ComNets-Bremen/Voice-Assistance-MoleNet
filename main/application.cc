@@ -67,10 +67,14 @@ void Application::Initialize() {
     // Print board name/version info
     display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
 
+    ESP_LOGI(TAG, "--> STEP A: Getting audio codec from board...");
     // Setup the audio service
     auto codec = board.GetAudioCodec();
+    ESP_LOGI(TAG, "--> STEP B: Initializing audio service...");
     audio_service_.Initialize(codec);
+    ESP_LOGI(TAG, "--> STEP C: Starting audio service...");
     audio_service_.Start();
+    ESP_LOGI(TAG, "--> STEP D: Audio service started successfully.");
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {
@@ -79,6 +83,13 @@ void Application::Initialize() {
     callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
     };
+    callbacks.on_local_command_detected =
+        [this](const std::string& command, const std::string& text,
+               const std::string& action) {
+            Schedule([this, command, text, action]() {
+                HandleLocalCommandDetected(command, text, action);
+            });
+        };
     callbacks.on_vad_change = [this](bool speaking) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
     };
@@ -110,7 +121,7 @@ void Application::Initialize() {
         switch (event) {
             case NetworkEvent::Scanning:
                 display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
-                xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
+                //xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
             case NetworkEvent::Connecting: {
                 if (data.empty()) {
@@ -163,11 +174,13 @@ void Application::Initialize() {
         }
     });
 
+    ESP_LOGI(TAG, "--> STEP E: Calling board.StartNetwork()...");
     // Start network asynchronously
     board.StartNetwork();
 
     // Update the status bar immediately to show the network state
     display->UpdateStatusBar(true);
+    ESP_LOGI(TAG, "--> STEP F: Application::Initialize() completed!");
 }
 
 void Application::Run() {
@@ -283,13 +296,95 @@ void Application::Run() {
     }
 }
 
-void Application::HandleNetworkConnectedEvent() {
-    ESP_LOGI(TAG, "Network connected");
+//Shadi Adding sth 
+void Application::EnterLocalMode() {
+    if (local_mode_) {
+        return;
+    }
+
+    local_mode_ = true;
+
+    ESP_LOGW(TAG, "========================================");
+    ESP_LOGW(TAG, "ENTERING LOCAL MODE");
+    ESP_LOGW(TAG, "WiFi connection is not available");
+    ESP_LOGW(TAG, "========================================");
+
+    // Stop/reset the cloud protocol.
+    if (protocol_) {
+        ESP_LOGI(TAG, "Resetting cloud protocol");
+        ResetProtocol();
+    }
+
+    // Return to a safe idle state.
+    SetDeviceState(kDeviceStateIdle);
+
+    // Offline commands use the embedded TinyML model, never MultiNet.
+    audio_service_.EnableVoiceProcessing(false);
+    audio_service_.EnableWakeWordDetection(false);
+    audio_service_.EnableLocalCommandDetection(true);
+
+    auto display = Board::GetInstance().GetDisplay();
+
+    display->SetStatus("LOCAL MODE");
+    display->SetEmotion("neutral");
+
+    display->SetChatMessage(
+        "system",
+        "You are disconnected.\n"
+        "Offline commands: YES, NO, UP. See serial monitor for responses."
+    );
+}
+// Shadi did it 
+void Application::HandleNetworkDisconnectedEvent() {
+
+    ESP_LOGW(TAG, "WiFi/network disconnected");
+
+    // First close any active notification.
     auto state = GetDeviceState();
 
-    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
+    if (state == kDeviceStateNotifying) {
+        StopNotification();
+    }
+
+    // Close the cloud audio channel if one is active.
+    if (state == kDeviceStateConnecting ||
+        state == kDeviceStateListening ||
+        state == kDeviceStateSpeaking) {
+
+        ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
+
+        if (protocol_) {
+            protocol_->CloseAudioChannel();
+        }
+    }
+
+    // Enter our local/offline mode.
+    EnterLocalMode();
+
+    // Update WiFi/network indicator.
+    auto display = Board::GetInstance().GetDisplay();
+    display->UpdateStatusBar(true);
+}
+void Application::HandleNetworkConnectedEvent() {
+
+    ESP_LOGI(TAG, "Network connected");
+
+    // Remember whether we are recovering from local mode.
+    bool was_local_mode = local_mode_;
+
+    // We are no longer offline.
+    local_mode_ = false;
+    audio_service_.EnableLocalCommandDetection(false);
+
+    auto state = GetDeviceState();
+
+    if (was_local_mode) {
+        ESP_LOGI(TAG, "Leaving LOCAL MODE and restoring XiaoZhi");
+
+        // The previous protocol was reset when entering local mode.
+        // Re-run the normal activation/protocol initialization.
         SetDeviceState(kDeviceStateActivating);
+
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");
             return;
@@ -302,15 +397,42 @@ void Application::HandleNetworkConnectedEvent() {
                 app->activation_task_handle_ = nullptr;
                 vTaskDelete(NULL);
             },
-            "activation", 4096 * 2, this, 2, &activation_task_handle_);
+            "activation",
+            4096 * 2,
+            this,
+            2,
+            &activation_task_handle_);
+
+    } else if (state == kDeviceStateStarting ||
+               state == kDeviceStateWifiConfiguring) {
+
+        // Original startup behavior.
+        SetDeviceState(kDeviceStateActivating);
+
+        if (activation_task_handle_ != nullptr) {
+            ESP_LOGW(TAG, "Activation task already running");
+            return;
+        }
+
+        xTaskCreate(
+            [](void* arg) {
+                Application* app = static_cast<Application*>(arg);
+                app->ActivationTask();
+                app->activation_task_handle_ = nullptr;
+                vTaskDelete(NULL);
+            },
+            "activation",
+            4096 * 2,
+            this,
+            2,
+            &activation_task_handle_);
     }
 
-    // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
 }
-
-void Application::HandleNetworkDisconnectedEvent() {
+/*
+void Application::HandleNetworkDisconnectedEventOriginal() {
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
@@ -325,7 +447,7 @@ void Application::HandleNetworkDisconnectedEvent() {
     // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
-}
+}*/
 
 void Application::HandleActivationDoneEvent() {
     ESP_LOGI(TAG, "Activation done");
@@ -536,8 +658,12 @@ void Application::InitializeProtocol() {
     protocol_->OnConnected([this]() { DismissAlert(); });
 
     protocol_->OnNetworkError([this](const std::string& message) {
-        last_error_message_ = message;
-        xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+       ESP_LOGW(TAG, "Cloud/network error: %s", message.c_str());
+
+       // Switch to local mode instead of showing the normal cloud error.
+       Schedule([this]() {
+        EnterLocalMode();
+      });
     });
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
@@ -711,6 +837,9 @@ void Application::InitializeProtocol() {
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
+    ESP_LOGI(TAG, "==============================");
+    ESP_LOGI(TAG, "ACTIVATION CODE: %s", code.c_str());
+    ESP_LOGI(TAG, "==============================");
     struct digit_sound {
         char digit;
         const std::string_view& sound;
@@ -879,6 +1008,27 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
+    
+    // In local mode we do not send anything to the XiaoZhi server.
+    // Local command handling will be added in the next step.
+    if (local_mode_) {
+        ESP_LOGI(TAG, "Wake word detected while in LOCAL MODE");
+
+        auto display = Board::GetInstance().GetDisplay();
+
+        display->SetStatus("LOCAL MODE");
+        display->SetChatMessage(
+            "system",
+            "You are disconnected.\n"
+            "Available commands:\n"
+            "- command 1\n"
+            "- command 2\n"
+            "- command 3"
+        );
+
+        return;
+    }
+    
     if (!protocol_) {
         return;
     }
@@ -913,6 +1063,39 @@ void Application::HandleWakeWordDetectedEvent() {
         // Restart the activation check if the wake word is detected during activation
         SetDeviceState(kDeviceStateIdle);
     }
+}
+
+void Application::HandleLocalCommandDetected(const std::string& command,
+                                             const std::string& text,
+                                             const std::string& action) {
+    if (!local_mode_) {
+        ESP_LOGW(TAG, "Ignoring local command outside LOCAL MODE: %s (%s)",
+                 command.c_str(), action.c_str());
+        return;
+    }
+
+    ESP_LOGI(TAG, "Local command received: command=%s, text=%s, action=%s",
+             command.c_str(), text.c_str(), action.c_str());
+
+    if (action == "tinyml_kws") {
+        if (command == "YES") {
+            ESP_LOGI(TAG,
+                     "Hello, I am your voice assistant, but I cannot work because I am not "
+                     "connected to the internet :D");
+        } else if (command == "NO") {
+            ESP_LOGI(TAG, "Do not worry. When you connect to internet, I will help you again.");
+            Board::GetInstance().GetLed()->SetOutput(false);
+        } else if (command == "UP") {
+            ESP_LOGI(TAG, "Today is Friday.");
+        }
+        return;
+    }
+
+    auto display = Board::GetInstance().GetDisplay();
+    display->SetStatus("LOCAL MODE");
+    display->SetChatMessage("user", text.c_str());
+    display->SetChatMessage("system", action.c_str());
+
 }
 
 void Application::BeginWakeWordInvoke(const std::string& wake_word) {
@@ -991,12 +1174,31 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+
+          if (local_mode_) {
+
+             display->SetStatus("LOCAL MODE");
+             display->SetEmotion("neutral");
+
+             display->SetChatMessage(
+               "system",
+               "You are disconnected.\n"
+               "Available commands:\n"
+               "- command 1\n"
+               "- command 2\n"
+               "- command 3" );
+
+          } else {
+
             display->SetStatus(Lang::Strings::STANDBY);
-            display->ClearChatMessages();    // Clear messages first
-            display->SetEmotion("neutral");  // Then set emotion (wechat mode checks child count)
-            audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
-            break;
+            display->ClearChatMessages();
+            display->SetEmotion("neutral");
+          }
+
+          audio_service_.EnableVoiceProcessing(false);
+          audio_service_.EnableWakeWordDetection(!local_mode_);
+          audio_service_.EnableLocalCommandDetection(local_mode_);
+          break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");

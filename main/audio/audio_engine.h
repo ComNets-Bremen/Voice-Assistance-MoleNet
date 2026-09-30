@@ -19,6 +19,7 @@ public:
     virtual void Feed(std::vector<int16_t>&& data) = 0;
 
     virtual void EnableWakeWordDetection(bool enable) = 0;
+    virtual void EnableLocalCommandDetection(bool enable) { (void)enable; }
     virtual void EnableVoiceProcessing(bool enable) = 0;
     virtual void EnableDeviceAec(bool enable) = 0;
 
@@ -29,6 +30,10 @@ public:
     virtual size_t GetFeedSize() const = 0;
 
     virtual void OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) = 0;
+    virtual void OnLocalCommandDetected(
+        std::function<void(const std::string& command,
+                           const std::string& text,
+                           const std::string& action)>) {}
     virtual void OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) = 0;
     virtual void OnVadStateChange(std::function<void(bool speaking)> callback) = 0;
 

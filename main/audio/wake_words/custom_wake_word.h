@@ -29,6 +29,10 @@ public:
     void Feed(const std::vector<int16_t>& data);
     void FeedMono(const int16_t* data, size_t samples);
     void OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback);
+    void OnLocalCommandDetected(
+        std::function<void(const std::string& command,
+                           const std::string& text,
+                           const std::string& action)> callback);
     void Start();
     void Stop();
     size_t GetFeedSize();
@@ -43,7 +47,7 @@ private:
         std::string action;
     };
 
-    // multinet 相关成员变量
+    // multinet 
     esp_mn_iface_t* multinet_ = nullptr;
     model_iface_data_t* multinet_model_data_ = nullptr;
     srmodel_list_t *models_ = nullptr;
@@ -55,6 +59,10 @@ private:
     std::deque<Command> commands_;
  
     std::function<void(const std::string& wake_word)> wake_word_detected_callback_;
+    std::function<void(const std::string& command,
+                       const std::string& text,
+                       const std::string& action)>
+        local_command_detected_callback_;
     AudioCodec* codec_ = nullptr;
     std::string last_detected_wake_word_;
     std::atomic<bool> running_ = false;

@@ -56,12 +56,28 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms, srmode
     frame_samples_ = frame_duration_ms * 16000 / 1000;
     output_buffer_.reserve(frame_samples_);
 
+#if defined(CONFIG_BOARD_TYPE_MOLENET_V63_MIC) || defined(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    if (!tinyml_keyword_spotter_.Initialize([this](const std::string& command) {
+            if (local_command_detected_callback_) {
+                local_command_detected_callback_(command, command, "tinyml_kws");
+            }
+        })) {
+        ESP_LOGE(TAG, "Failed to initialize the TinyML keyword spotter");
+    }
+#endif
+
+#if defined(CONFIG_BOARD_TYPE_MOLENET_V63_MIC) || defined(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    // MoleNet's offline commands use the model embedded in the application
+    // image. It has no ESP-SR model partition, so do not probe one here.
+    models_ = models_list;
+#else
     if (models_list == nullptr) {
         models_ = esp_srmodel_init("model");
         owns_models_ = models_ != nullptr;
     } else {
         models_ = models_list;
     }
+#endif
 
     char* wakenet_model_name = nullptr;
     char* multinet_model_name = nullptr;
@@ -84,6 +100,15 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms, srmode
                 wake_word_detected_callback_(wake_word);
             }
         });
+        custom_wake_word_->OnLocalCommandDetected(
+            [this](const std::string& command, const std::string& text,
+                   const std::string& action) {
+                xEventGroupClearBits(event_group_, kWakeWordEnabled);
+                UpdateActiveState();
+                if (local_command_detected_callback_) {
+                    local_command_detected_callback_(command, text, action);
+                }
+            });
         if (!custom_wake_word_->Initialize(codec_, models_)) {
             ESP_LOGE(TAG, "Failed to initialize MultiNet wake-word detector");
             custom_wake_word_.reset();
@@ -192,6 +217,9 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms, srmode
 }
 
 void AfeAudioEngine::Feed(std::vector<int16_t>&& data) {
+#if defined(CONFIG_BOARD_TYPE_MOLENET_V63_MIC) || defined(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    tinyml_keyword_spotter_.Feed(data.data(), data.size());
+#endif
     EventBits_t bits = xEventGroupGetBits(event_group_);
     if ((bits & kVoiceProcessingEnabled) && !kUseAfeForVoiceProcessing) {
         OutputRawAudio(data);
@@ -233,6 +261,14 @@ void AfeAudioEngine::EnableWakeWordDetection(bool enable) {
     UpdateActiveState();
 }
 
+void AfeAudioEngine::EnableLocalCommandDetection(bool enable) {
+#if defined(CONFIG_BOARD_TYPE_MOLENET_V63_MIC) || defined(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    tinyml_keyword_spotter_.SetEnabled(enable);
+#else
+    (void)enable;
+#endif
+}
+
 void AfeAudioEngine::EnableVoiceProcessing(bool enable) {
     if (enable) {
         xEventGroupSetBits(event_group_, kVoiceProcessingEnabled);
@@ -269,6 +305,12 @@ size_t AfeAudioEngine::GetFeedSize() const {
 
 void AfeAudioEngine::OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) {
     wake_word_detected_callback_ = std::move(callback);
+}
+
+void AfeAudioEngine::OnLocalCommandDetected(
+    std::function<void(const std::string& command, const std::string& text,
+                       const std::string& action)> callback) {
+    local_command_detected_callback_ = std::move(callback);
 }
 
 void AfeAudioEngine::OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) {

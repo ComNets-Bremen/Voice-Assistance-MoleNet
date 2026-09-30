@@ -17,6 +17,9 @@
 
 #include "audio_engine.h"
 #include "wake_words/wake_word_audio_cache.h"
+#if defined(CONFIG_BOARD_TYPE_MOLENET_V63_MIC) || defined(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+#include "wake_words/tinyml_kws/tinyml_keyword_spotter.h"
+#endif
 
 class CustomWakeWord;
 
@@ -29,6 +32,7 @@ public:
     void Feed(std::vector<int16_t>&& data) override;
 
     void EnableWakeWordDetection(bool enable) override;
+    void EnableLocalCommandDetection(bool enable) override;
     void EnableVoiceProcessing(bool enable) override;
     void EnableDeviceAec(bool enable) override;
 
@@ -39,6 +43,10 @@ public:
     size_t GetFeedSize() const override;
 
     void OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) override;
+    void OnLocalCommandDetected(
+        std::function<void(const std::string& command,
+                           const std::string& text,
+                           const std::string& action)> callback) override;
     void OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) override;
     void OnVadStateChange(std::function<void(bool speaking)> callback) override;
 
@@ -79,6 +87,9 @@ private:
     WakeDetector wake_detector_ = WakeDetector::kNone;
 
     std::unique_ptr<CustomWakeWord> custom_wake_word_;
+#if defined(CONFIG_BOARD_TYPE_MOLENET_V63_MIC) || defined(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    TinyMlKeywordSpotter tinyml_keyword_spotter_;
+#endif
     std::vector<std::string> wake_words_;
     std::string last_detected_wake_word_;
     std::vector<int16_t> input_buffer_;
@@ -86,6 +97,8 @@ private:
     std::mutex input_buffer_mutex_;
 
     std::function<void(const std::string&)> wake_word_detected_callback_;
+    std::function<void(const std::string&, const std::string&, const std::string&)>
+        local_command_detected_callback_;
     std::function<void(std::vector<int16_t>&&)> output_callback_;
     std::function<void(bool)> vad_state_change_callback_;
 

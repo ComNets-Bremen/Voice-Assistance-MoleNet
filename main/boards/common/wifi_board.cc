@@ -107,12 +107,17 @@ void WifiBoard::TryWifiConnect() {
         esp_timer_start_once(connect_timer_, CONNECT_TIMEOUT_SEC * 1000000ULL);
         WifiManager::GetInstance().StartStation();
     } else {
-        // No SSID configured, enter config mode
-        // Wait for the board version to be shown
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        StartWifiConfigMode();
+        // No WiFi credentials are available.
+        // Enter local mode instead of WiFi configuration mode.
+        ESP_LOGW(TAG, "No WiFi credentials available, entering local mode");
+
+        Application::GetInstance().Schedule([]() {
+            Application::GetInstance().EnterLocalMode();
+        });
     }
 }
+
+
 
 void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
     switch (event) {
@@ -160,11 +165,15 @@ void WifiBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
 }
 
 void WifiBoard::OnWifiConnectTimeout(void* arg) {
-    auto* board = static_cast<WifiBoard*>(arg);
-    ESP_LOGW(TAG, "WiFi connection timeout, entering config mode");
+    (void)arg;
+
+    ESP_LOGW(TAG, "WiFi connection timeout, entering local mode");
 
     WifiManager::GetInstance().StopStation();
-    board->StartWifiConfigMode();
+
+    Application::GetInstance().Schedule([]() {
+        Application::GetInstance().EnterLocalMode();
+    });
 }
 
 void WifiBoard::StartWifiConfigMode() {

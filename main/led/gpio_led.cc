@@ -129,6 +129,15 @@ void GpioLed::TurnOff() {
     ledc_update_duty(ledc_channel_.speed_mode, ledc_channel_.channel);
 }
 
+void GpioLed::SetOutput(bool enabled) {
+    if (enabled) {
+        SetBrightness(HIGH_BRIGHTNESS);
+        TurnOn();
+    } else {
+        TurnOff();
+    }
+}
+
 void GpioLed::BlinkOnce() {
     Blink(1, 100);
 }

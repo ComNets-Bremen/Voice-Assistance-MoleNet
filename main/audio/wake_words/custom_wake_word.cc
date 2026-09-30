@@ -139,6 +139,12 @@ void CustomWakeWord::OnWakeWordDetected(std::function<void(const std::string& wa
     wake_word_detected_callback_ = callback;
 }
 
+void CustomWakeWord::OnLocalCommandDetected(
+    std::function<void(const std::string& command,
+                       const std::string& text,
+                       const std::string& action)> callback) {
+    local_command_detected_callback_ = callback;
+}
 void CustomWakeWord::Start() {
     running_ = true;
 }
@@ -187,11 +193,16 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
         esp_mn_state_t mn_state = multinet_->detect(multinet_model_data_, input_buffer_.data());
         
         if (mn_state == ESP_MN_STATE_DETECTED) {
-            esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
+            esp_mn_results_t* mn_result = multinet_->get_results(multinet_model_data_);
             for (int i = 0; i < mn_result->num && running_; i++) {
-                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
-                        mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
+                ESP_LOGI(TAG,
+                 "Command detected: command_id=%d, string=%s, prob=%f",
+                 mn_result->command_id[i],
+                 mn_result->string,
+                 mn_result->prob[i]);
+
                 auto& command = commands_[mn_result->command_id[i] - 1];
+
                 if (command.action == "wake") {
                     last_detected_wake_word_ = command.text;
                     running_ = false;
@@ -200,6 +211,24 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
                     if (wake_word_detected_callback_) {
                         wake_word_detected_callback_(last_detected_wake_word_);
                     }
+                } else if (command.action.rfind("local_", 0) == 0) {
+                    ESP_LOGI(TAG,
+                     "Local command detected: command=%s, text=%s, action=%s",
+                     command.command.c_str(),
+                     command.text.c_str(),
+                     command.action.c_str());
+                    running_ = false;
+                    input_buffer_.clear();
+
+                    if (local_command_detected_callback_) { 
+                        local_command_detected_callback_(
+                            command.command,
+                            command.text,
+                            command.action
+                        );
+
+                    }
+
                 }
             }
             multinet_->clean(multinet_model_data_);

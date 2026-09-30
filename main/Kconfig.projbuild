@@ -159,6 +159,15 @@ choice BOARD_TYPE
     config BOARD_TYPE_BREAD_COMPACT_ESP32
         bool "Bread Compact ESP32 DevKit (面包板)"
         depends on IDF_TARGET_ESP32
+    config BOARD_TYPE_PADMA_AUDIO_TEST
+        bool "Padma Audio Test"
+        depends on IDF_TARGET_ESP32
+    config BOARD_TYPE_MOLENET_V63_MIC
+        bool "MoleNet V6.3 Mic"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_MOLENET_V71_MIC
+        bool "MoleNet V7.1 Mic"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_BREAD_COMPACT_ESP32_LCD
         bool "Bread Compact ESP32 DevKit + LCD (面包板)"
         depends on IDF_TARGET_ESP32

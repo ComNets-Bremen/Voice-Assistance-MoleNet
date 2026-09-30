@@ -105,6 +105,10 @@ elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_NT26)
     set(BUILTIN_ICON_FONT font_material_symbols_14_1)
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ESP32)
     set(BOARD_DIR "bread-compact-esp32")
+elseif(CONFIG_BOARD_TYPE_MOLENET_V63_MIC)
+    set(BOARD_DIR "molenet-v63-mic")
+elseif(CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    set(BOARD_DIR "molenet-v7.1-mic")
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_ESP32_LCD)
     set(BOARD_DIR "bread-compact-esp32-lcd")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_14_1)
@@ -1038,6 +1042,15 @@ if(CONFIG_IDF_TARGET_ESP32S3)
 endif()
 
 set(MAIN_PRIV_REQUIRES_EXTRA "")
+if(CONFIG_BOARD_TYPE_MOLENET_V63_MIC OR CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    list(APPEND SOURCES
+        "audio/wake_words/tinyml_kws/tinyml_keyword_spotter.cc"
+        "audio/wake_words/tinyml_kws/kissfft/kiss_fft.c"
+        "audio/wake_words/tinyml_kws/kissfft/kiss_fftr.c"
+    )
+    list(APPEND INCLUDE_DIRS "audio/wake_words/tinyml_kws/kissfft")
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__esp-dl)
+endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
         m5stack__m5pm1
@@ -1089,6 +1102,21 @@ idf_component_register(SRCS ${SOURCES}
                         xiaozhi-fonts
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
+
+if(CONFIG_BOARD_TYPE_MOLENET_V63_MIC OR CONFIG_BOARD_TYPE_MOLENET_V71_MIC)
+    idf_component_get_property(ESP_DL_COMPONENT_DIR espressif__esp-dl COMPONENT_DIR)
+    set(ESP_DL_CMAKE_DIR ${ESP_DL_COMPONENT_DIR}/fbs_loader/cmake)
+    set(cmake_dir ${ESP_DL_CMAKE_DIR})
+    include(${ESP_DL_CMAKE_DIR}/utilities.cmake)
+    target_add_aligned_binary_data(${COMPONENT_LIB}
+        "audio/wake_words/tinyml_kws/models/kws_3class.espdl" BINARY)
+    target_add_aligned_binary_data(${COMPONENT_LIB}
+        "audio/wake_words/tinyml_kws/mfcc_params/hann_window.bin" BINARY)
+    target_add_aligned_binary_data(${COMPONENT_LIB}
+        "audio/wake_words/tinyml_kws/mfcc_params/mel_filterbank_transposed.bin" BINARY)
+    target_add_aligned_binary_data(${COMPONENT_LIB}
+        "audio/wake_words/tinyml_kws/mfcc_params/dct_matrix.bin" BINARY)
+endif()
 
 # Use target_compile_definitions to define the reported board identity
 # If BOARD_NAME is empty, use BOARD_TYPE
